@@ -451,23 +451,7 @@ ifeq ($(MACHINE), Darwin)
 
 endif
 
-ifeq ($(HOST), phlebas)
- CXX := mpic++
- CC  := mpicc
- FC  := mpif90
- fC  := mpif90
- F90 := mpif90
- COPTF   := -O2
- CDEBF   := -O0
- FOPTF   := $(COPTF)
- fOPTF   := $(COPTF)
- CXXOPTF := $(COPTF)
- FDEBF   := $(CDEBF)
- fDEBF   := $(CDEBF)
- CXXDEBF := $(CDEBF)
- BL_MPI_LIBS = -lmpi -lmpi_mpifh
-endif
-ifeq ($(HOST), serenity)
+ifeq ($(DISTRIBUTION), Ubuntu)
  CXX := mpic++
  CC  := mpicc
  FC  := mpif90
