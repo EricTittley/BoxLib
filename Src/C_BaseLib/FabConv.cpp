@@ -982,13 +982,13 @@ RealDescriptor::convertFromNativeFormat (std::ostream&         os,
   while(sr.TryOutput()) {
     nitems = nitemsSave;
     in = inSave;
-    const int SHOULDWRITE = 8192;
+    const long SHOULDWRITE = 8192;
 
     char* bufr = new char[SHOULDWRITE * od.numBytes()];
 
     while (nitems > 0)
     {
-        int put = int(nitems) > SHOULDWRITE ? SHOULDWRITE : int(nitems);
+        long put = long(nitems) > SHOULDWRITE ? SHOULDWRITE : long(nitems);
         PD_convert(bufr,
                    in,
                    put,

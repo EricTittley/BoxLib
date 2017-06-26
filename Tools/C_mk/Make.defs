@@ -310,7 +310,6 @@ ifdef USE_GCC
         CXXOPTF += -fsanitize=address -fsanitize=undefined
 	CXXDEBF += -fsanitize=address -fsanitize=undefined
     endif
-    #CXXDEBF    += -g -O1 -Wall -Wno-sign-compare
     CXXDEBF    += -g -O0 -fno-inline -ggdb -Wall -Wno-sign-compare
     FULLWARN   := -pedantic -Wall -Wno-sign-compare
     CXX	       := g++
@@ -462,8 +461,8 @@ ifdef USE_GCC
     endif
     endif
 
-    FOPTF += -ffixed-line-length-0 -g -O3
-    fOPTF += -ffixed-line-length-0 -g -O3
+    FOPTF += -g -O3 -ffixed-line-length-0
+    fOPTF += -g -O3 -ffixed-line-length-0
     ifeq ($(THREAD_SANITIZER),TRUE)
         FOPTF += -fsanitize=thread
         fOPTF += -fsanitize=thread
