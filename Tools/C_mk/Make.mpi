@@ -457,13 +457,14 @@ ifeq ($(DISTRIBUTION), Ubuntu)
  FC  := mpif90
  fC  := mpif90
  F90 := mpif90
- COPTF   := -O2
- CDEBF   := -O0
- FOPTF   := $(COPTF)
- fOPTF   := $(COPTF)
- CXXOPTF := $(COPTF)
- FDEBF   := $(CDEBF)
- fDEBF   := $(CDEBF)
- CXXDEBF := $(CDEBF)
+ #COPTF   := -O2
+ #CDEBF   := -O0
+ #FOPTF   := $(COPTF)
+ #fOPTF   := $(COPTF)
+ ##CXXOPTF := $(COPTF) -std=c++11
+ #CXXOPTF := $(COPTF)
+ #FDEBF   := $(CDEBF)
+ #fDEBF   := $(CDEBF)
+ #CXXDEBF := $(CDEBF)
  BL_MPI_LIBS = -lmpi -lmpi_mpifh
 endif

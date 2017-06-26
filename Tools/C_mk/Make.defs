@@ -428,7 +428,8 @@ ifeq ($(FCOMP),g77)
     fDEBF +=   -ffortran-bounds-check
 endif
 
-ifeq ($(findstring gfortran, $(FCOMP)), gfortran)
+#ifeq ($(findstring gfortran, $(FCOMP)), gfortran)
+ifdef USE_GCC
     FC = $(FCOMP)
     fC = $(FCOMP)
     FFLAGS = -fno-range-check -fno-second-underscore -J$(fmoddir) -I $(fmoddir)

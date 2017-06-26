@@ -26,12 +26,15 @@ $(optionsLib): $(addprefix $(objTempDir)/, $(objForLibs))
 	$(SILENT) $(RANLIB) $@
  
 realclean:: clean
-	@echo Cleaning ...
+	@echo Deep cleaning ...
 	$(SILENT) $(RM) lib*.a  TAGS tags BROWSE
 	$(SILENT) $(RM) -r d o f ii_files *~
 	$(SILENT) $(RM) *.ex *.ii *.o mon.out gmon.out
 	$(SILENT) $(RM) *.mod
 	$(SILENT) $(RM) work.pc work.pcl
+
+distclean: realclean
+	$(SILENT) $(RM) Make.log
 
 file_locations:
 	$(BOXLIB_HOME)/Tools/F_scripts/find_files_vpath.py --vpath "$(VPATH_LOCATIONS)" --files "$(CEXE_sources) $(FEXE_sources) $(cEXE_sources) $(fEXE_sources) $(f90EXE_sources) $(F90EXE_sources)"
