@@ -341,8 +341,10 @@ ifdef USE_GCC
     #
     # Force C to have same flags as C++.
     #
-    COPTF := $(CXXOPTF) -std=gnu99
-    CDEBF := $(CXXDEBF) -std=gnu99
+    #COPTF := $(CXXOPTF) -std=gnu99
+    #CDEBF := $(CXXDEBF) -std=gnu99
+    COPTF := $(CXXOPTF)
+    CDEBF := $(CXXDEBF)
 
     ifeq ($(USE_CXX11),TRUE)
         CXXOPTF += -std=c++11
