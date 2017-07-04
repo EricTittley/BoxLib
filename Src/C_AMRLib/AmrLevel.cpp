@@ -21,7 +21,16 @@ SlabStatList   AmrLevel::slabstat_lst;
 
 void
 AmrLevel::postCoarseTimeStep (Real time)
-{}
+{
+    BL_ASSERT(level == 0);
+    // sync up statedata time
+    for (int lev = 0; lev <= parent->finestLevel(); ++lev) {
+	AmrLevel& amrlevel = parent->getLevel(lev);
+	for (int i = 0; i < amrlevel.state.size(); ++i) {
+	    amrlevel.state[i].syncNewTimeLevel(time);
+	}
+    }
+}
 
 #ifdef USE_SLABSTAT
 SlabStatList&
@@ -65,9 +74,6 @@ AmrLevel::AmrLevel (Amr&            papa,
     :
     geom(level_geom),
     grids(ba)
-#ifdef USE_PARTICLES
-    ,particle_grids(ba)
-#endif
 {
     BL_PROFILE("AmrLevel::AmrLevel()");
     level  = lev;
@@ -97,13 +103,7 @@ AmrLevel::AmrLevel (Amr&            papa,
                         parent->dtLevel(lev));
     }
 
-    if (Amr::useFixedCoarseGrids) constructAreaNotToTag();
-
-#ifdef USE_PARTICLES
-    // Note: it is important to call make_particle_dmap *after* the state
-    //       has been defined because it makes use of the state's DistributionMap
-    make_particle_dmap();
-#endif
+    if (parent->useFixedCoarseGrids()) constructAreaNotToTag();
 
     finishConstructor();
 }
@@ -117,9 +117,6 @@ AmrLevel::AmrLevel (Amr&            papa,
     :
     geom(level_geom),
     grids(ba)
-#ifdef USE_PARTICLES
-    ,particle_grids(ba)
-#endif
 {
     BL_PROFILE("AmrLevel::AmrLevel(dm)");
     level  = lev;
@@ -150,13 +147,7 @@ AmrLevel::AmrLevel (Amr&            papa,
                         parent->dtLevel(lev));
     }
 
-    if (Amr::useFixedCoarseGrids) constructAreaNotToTag();
-
-#ifdef USE_PARTICLES
-    // Note: it is important to call make_particle_dmap *after* the state
-    //       has been defined because it makes use of the state's DistributionMap
-    make_particle_dmap();
-#endif
+    if (parent->useFixedCoarseGrids()) constructAreaNotToTag();
 
     finishConstructor();
 }
@@ -205,21 +196,15 @@ AmrLevel::restart (Amr&          papa,
     }
 
     state.resize(ndesc);
-    for (int i = 0; i < ndesc; i++)
+    for (int i = 0; i < ndesc; ++i)
     {
 	if (state_in_checkpoint[i]) {
-	    state[i].restart(is, desc_lst[i], papa.theRestartFile(), bReadSpecial);
+	    state[i].restart(is, geom.Domain(), grids,
+			     desc_lst[i], papa.theRestartFile());
 	}
     }
  
-    if (Amr::useFixedCoarseGrids) constructAreaNotToTag();
-
-#ifdef USE_PARTICLES
-    // Note: it is important to call make_particle_dmap *after* the state
-    //       has been defined because it makes use of the state's DistributionMap
-    particle_grids = grids;
-    make_particle_dmap();
-#endif
+    if (parent->useFixedCoarseGrids()) constructAreaNotToTag();
 
     finishConstructor();
 }
@@ -232,69 +217,6 @@ AmrLevel::set_state_in_checkpoint (Array<int>& state_in_checkpoint)
 
 void
 AmrLevel::finishConstructor () {}
-
-#ifdef USE_PARTICLES
-void
-AmrLevel::make_particle_dmap ()
-{
-    // Here we create particle_grids and make a distribution map for it
-    // Right now particle_grids is identical to grids, but the whole point is that 
-    // particle_grids can be optimized for distributing the particle work. 
-
-    // take a shortcut if possible
-    if (grids == particle_grids) {
-	particle_dmap = get_new_data(0).DistributionMap();
-	return;
-    }
-
-    Array<int> ParticleProcMap;
-    ParticleProcMap.resize(particle_grids.size()+1); // +1 is a historical thing
-
-    for (int i = 0; i <= particle_grids.size(); i++)
-        ParticleProcMap[i] = -1;
-
-    // Warning: O(N^2)!
-    for (int j = 0; j < grids.size(); j++)
-    {
-        const int who = get_new_data(0).DistributionMap()[j];
-        for (int i = 0; i < particle_grids.size(); i++)
-        {
-            if (grids[j].contains(particle_grids[i]))
-            {
-                ParticleProcMap[i] = who;
-            }
-        }
-    }
-
-    // Don't forget the last entry!
-    ParticleProcMap[particle_grids.size()] = ParallelDescriptor::MyProc();
-
-    // Sanity check that all grids got assigned to processors
-    for (int i = 0; i <= particle_grids.size(); i++)
-        if (ParticleProcMap[i] == -1)
-            BoxLib::Error("Didn't assign every particle_grids box to a processor!!");
-
-    // Different DistributionMappings must have different numbers of boxes 
-    if (grids.size() != particle_grids.size())
-    {
-        const bool put_in_cache = true;
-        particle_dmap = DistributionMapping(ParticleProcMap,put_in_cache);
-    }
-    else
-    {
-        if (grids != particle_grids)
-        {
-           // Oops -- can't handle this 
-            BoxLib::Error("grids != particle_grids but they have the same number of boxes");
-        }
-        else
-        {
-           // Just copy the grids distribution map to the particle_grids distribution map
-           particle_dmap = get_new_data(0).DistributionMap();
-        }
-    }
-}
-#endif
 
 void
 AmrLevel::setTimeLevel (Real time,
@@ -355,26 +277,13 @@ AmrLevel::checkPoint (const std::string& dir,
     // Build directory to hold the MultiFabs in the StateData at this level.
     // The directory is relative the the directory containing the Header file.
     //
-    std::string Level = BoxLib::Concatenate("Level_", level, 1);
-    //
-    // Now for the full pathname of that directory.
-    //
-    std::string FullPath = dir;
-    if (!FullPath.empty() && FullPath[FullPath.length()-1] != '/')
-    {
-        FullPath += '/';
+    std::string LevelDir, FullPath;
+    LevelDirectoryNames(dir, LevelDir, FullPath);
+    if( ! levelDirectoryCreated) {
+      CreateLevelDirectory(dir);
+      // ---- Force other processors to wait until directory is built.
+      ParallelDescriptor::Barrier("AmrLevel::checkPoint::dir");
     }
-    FullPath += Level;
-    //
-    // Only the I/O processor makes the directory if it doesn't already exist.
-    //
-    if (ParallelDescriptor::IOProcessor())
-        if (!BoxLib::UtilCreateDirectory(FullPath, 0755))
-            BoxLib::CreateDirectoryFailed(FullPath);
-    //
-    // Force other processors to wait till directory is built.
-    //
-    ParallelDescriptor::Barrier("AmrLevel::checkPoint::dir");
 
     if (ParallelDescriptor::IOProcessor())
     {
@@ -393,13 +302,13 @@ AmrLevel::checkPoint (const std::string& dir,
         // The name is relative to the Header file containing this name.
         // It's the name that gets written into the Header.
         //
-        // There is only one MultiFab written out at each level in HyperCLaw.
-        //
-        std::string PathNameInHdr = BoxLib::Concatenate(Level    + "/SD_", i, 1);
+        std::string PathNameInHdr = BoxLib::Concatenate(LevelDir + "/SD_", i, 1);
         std::string FullPathName  = BoxLib::Concatenate(FullPath + "/SD_", i, 1);
 
         state[i].checkPoint(PathNameInHdr, FullPathName, os, how, dump_old);
     }
+
+    levelDirectoryCreated = false;  // ---- now that the checkpoint is finished
 }
 
 AmrLevel::~AmrLevel ()
@@ -1364,6 +1273,14 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
     const Box&              pdomain = state[index].getDomain();
     const BoxArray&         mf_BA   = mf.boxArray();
     AmrLevel&               clev    = parent->getLevel(level-1);
+    const Geometry&         cgeom   = clev.geom;
+
+    Box domain_g = pdomain;
+    for (int i = 0; i < BL_SPACEDIM; ++i) {
+	if (geom.isPeriodic(i)) {
+	    domain_g.grow(i,nghost);
+	}
+    }
 
     std::vector< std::pair<int,int> > ranges  = desc.sameInterps(scomp,ncomp);
 
@@ -1380,8 +1297,8 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
         for (int j = 0, N = crseBA.size(); j < N; ++j)
         {
             BL_ASSERT(mf_BA[j].ixType() == desc.getType());
-
-            crseBA.set(j,mapper->CoarseBox(BoxLib::grow(mf_BA[j],nghost),crse_ratio));
+	    const Box& bx = BoxLib::grow(mf_BA[j],nghost) & domain_g;
+            crseBA.set(j,mapper->CoarseBox(bx, crse_ratio));
         }
 
 	MultiFab crseMF(crseBA,NComp,0);
@@ -1396,11 +1313,11 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
 	    std::vector<Real> stime;
 	    statedata.getData(smf,stime,time);
 
-	    const Geometry& geom = clev.geom;
+	    const Geometry& cgeom = clev.geom;
 
-	    StateDataPhysBCFunct physbcf(statedata,SComp,geom);
+	    StateDataPhysBCFunct physbcf(statedata,SComp,cgeom);
 
-	    BoxLib::FillPatchSingleLevel(crseMF,time,smf,stime,SComp,0,NComp,geom,physbcf);
+	    BoxLib::FillPatchSingleLevel(crseMF,time,smf,stime,SComp,0,NComp,cgeom,physbcf);
 	}
 	else
 	{
@@ -1412,7 +1329,7 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
 #endif
 	for (MFIter mfi(mf); mfi.isValid(); ++mfi)
 	{
-	    const Box& dbx = BoxLib::grow(mfi.validbox(),nghost);
+	    const Box& dbx = BoxLib::grow(mfi.validbox(),nghost) & domain_g;
 	    
 	    Array<BCRec> bcr(ncomp);
 	    
@@ -1425,12 +1342,15 @@ AmrLevel::FillCoarsePatch (MultiFab& mf,
 			   NComp,
 			   dbx,
 			   crse_ratio,
-			   clev.geom,
+			   cgeom,
 			   geom,
 			   bcr,
 			   SComp,
 			   index);
 	}
+
+	StateDataPhysBCFunct physbcf(state[index],SComp,geom);
+	physbcf.FillBoundary(mf, DComp, NComp, time);
 
         DComp += NComp;
     }
@@ -1894,11 +1814,11 @@ void AmrLevel::setAreaNotToTag(BoxArray& ba)
 
 void AmrLevel::constructAreaNotToTag()
 {
-    if (level == 0 || !Amr::useFixedCoarseGrids || Amr::useFixedUpToLevel>level)
+    if (level == 0 || !parent->useFixedCoarseGrids() || parent->useFixedUpToLevel()>level)
         return;
 
     // We are restricting the tagging on the finest fixed level
-    if (Amr::useFixedUpToLevel==level)
+    if (parent->useFixedUpToLevel()==level)
     {
         // We use the next coarser level shrunk by one blockingfactor
         //    as the region in which we allow tagging. 
@@ -1917,7 +1837,7 @@ void AmrLevel::constructAreaNotToTag()
         BL_ASSERT(bxa.contains(m_AreaNotToTag));
     }
 
-    if (Amr::useFixedUpToLevel<level)
+    if (parent->useFixedUpToLevel()<level)
     {
         Box tagarea = parent->getLevel(level-1).getAreaToTag();
         tagarea.refine(parent->refRatio(level-1));
@@ -1986,14 +1906,6 @@ AmrLevel::AddProcsToComp(Amr *aptr, int nSidecarProcs, int prevSidecarProcs,
       BoxLib::BroadcastBoxArray(m_AreaNotToTag, scsMyId, ioProcNumSCS, scsComm);
 
 
-#ifdef USE_PARTICLES
-      BoxLib::BroadcastBoxArray(particle_grids, scsMyId, ioProcNumSCS, scsComm);
-
-      int sentinelProc(ParallelDescriptor::MyProcComp());
-      BoxLib::BroadcastDistributionMapping(particle_dmap, sentinelProc, scsMyId,
-                                           ioProcNumSCS, scsComm, true);
-#endif
-
 #ifdef USE_SLABSTAT
       BoxLib::Abort("**** Error in AmrLevel::MSS:  USE_SLABSTAT not implemented");
 #endif
@@ -2007,6 +1919,11 @@ AmrLevel::AddProcsToComp(Amr *aptr, int nSidecarProcs, int prevSidecarProcs,
       for(int i(0); i < state.size(); ++i) {
         state[i].AddProcsToComp(desc_lst[i], ioProcNumSCS, ioProcNumAll, scsMyId, scsComm);
       }
+
+      // ---- bools
+      int ldc(levelDirectoryCreated);
+      ParallelDescriptor::Bcast(&ldc, 1, ioProcNumAll, scsComm);
+      levelDirectoryCreated = ldc;
 #endif
 }
 
@@ -2019,5 +1936,41 @@ AmrLevel::Check() const
       state[i].Check();
     }
 }
+
+
+void
+AmrLevel::LevelDirectoryNames(const std::string &dir,
+                              std::string &LevelDir,
+			      std::string &FullPath)
+{
+    LevelDir = BoxLib::Concatenate("Level_", level, 1);
+    //
+    // Now for the full pathname of that directory.
+    //
+    FullPath = dir;
+    if( ! FullPath.empty() && FullPath.back() != '/') {
+        FullPath += '/';
+    }
+    FullPath += LevelDir;
+}
+
+void
+AmrLevel::CreateLevelDirectory (const std::string &dir)
+{
+    // Build directory to hold the MultiFabs in the StateData at this level.
+    // The directory is relative the the directory containing the Header file.
+
+    std::string LevelDir, FullPath;
+    LevelDirectoryNames(dir, LevelDir, FullPath);
+
+    if(ParallelDescriptor::IOProcessor()) {
+      if( ! BoxLib::UtilCreateDirectory(FullPath, 0755)) {
+        BoxLib::CreateDirectoryFailed(FullPath);
+      }
+    }
+
+    levelDirectoryCreated = true;
+}
+
 
 

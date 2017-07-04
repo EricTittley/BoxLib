@@ -53,6 +53,8 @@ class Test(object):
 
         self.debug = 0
 
+        self.acc = 0
+        
         self.useMPI = 0
         self.numprocs = -1
 
@@ -78,6 +80,8 @@ class Test(object):
 
         self.addToCompileString = ""
 
+        self.runtime_params = ""
+
         self.reClean = 0    # set automatically, not by users
 
         self.wall_time = 0   # set automatically, not by users
@@ -99,6 +103,8 @@ class Test(object):
 
         self.compile_successful = False  # filled automatically
         self.compare_successful = False  # filled automatically
+
+        self.customRunCmd = None
 
     def __lt__(self, other):
         return self.value() < other.value()
@@ -488,7 +494,7 @@ class Suite(object):
             status_file = "{}/{}/{}.status".format(self.webTopDir, test_dir, test)
             with open(status_file, "r") as sf:
                 for line in sf:
-                    if line.find("FAILED") >= 0:
+                    if line.find("FAILED") >= 0 or line.find("CRASHED") >= 0:
                         failed.append(test)
 
         os.chdir(cwd)
@@ -516,6 +522,7 @@ class Suite(object):
         build_opts = ""
         if test is not None:
             build_opts += "NDEBUG={} ".format(f_flag(test.debug, test_not=True))
+            build_opts += "ACC={} ".format(f_flag(test.acc))
             build_opts += "MPI={} ".format(f_flag(test.useMPI))
             build_opts += "OMP={} ".format(f_flag(test.useOMP))
 
@@ -546,6 +553,7 @@ class Suite(object):
 
         if test is not None:
             build_opts += "DEBUG={} ".format(c_flag(test.debug))
+            build_opts += "USE_ACC={} ".format(c_flag(test.acc))
             build_opts += "USE_MPI={} ".format(c_flag(test.useMPI))
             build_opts += "USE_OMP={} ".format(c_flag(test.useOMP))
             build_opts += "DIM={} ".format(test.dim)

@@ -64,12 +64,13 @@ void mempool_init()
 	}
 
 #ifdef BL_MEM_PROFILING
-	MemProfiler::add("MemPool", [] () -> MemProfiler::MemInfo {
-		int MB_min, MB_max, MB_tot;
-		mempool_get_stats(MB_min, MB_max, MB_tot);
-		long b = MB_tot * (1024L*1024L);
-		return {b, b};
-	    });
+	MemProfiler::add("MemPool", std::function<MemProfiler::MemInfo()>
+			 ([] () -> MemProfiler::MemInfo {
+			     int MB_min, MB_max, MB_tot;
+			     mempool_get_stats(MB_min, MB_max, MB_tot);
+			     long b = MB_tot * (1024L*1024L);
+			     return {b, b};
+			 }));
 #endif
     }
 }
@@ -117,9 +118,7 @@ void double_array_init (double* p, size_t nelems)
 
 void array_init_snan (double* p, size_t nelems)
 {
-#ifdef BL_USE_CXX11
     static_assert(sizeof(double) == sizeof(long long), "MemPool: sizeof double != sizeof long long");
-#endif
 
     for (size_t i = 0; i < nelems; ++i) {
 	long long *ll = (long long *) (p++);

@@ -20,6 +20,10 @@ const Real INVALID_TIME = -1.0e200;
 const int MFNEWDATA = 0;
 const int MFOLDDATA = 1;
 
+Array<std::string> StateData::fabArrayHeaderNames;
+std::map<std::string, Array<char> > *StateData::faHeaderMap;
+
+
 StateData::StateData () 
 {
    desc = 0;
@@ -219,26 +223,50 @@ StateData::reset ()
 void
 StateData::restart (std::istream&          is,
                     const StateDescriptor& d,
-                    const std::string&     chkfile,
-                    bool                   bReadSpecial)
+                    const std::string&     chkfile)
 {
     BL_PROFILE("StateData::restart()");
 
-    if (bReadSpecial)
-   	BoxLib::Abort("StateData:: restart:: w/bReadSpecial not implemented");
-
     desc = &d;
-
     is >> domain;
+    grids.readFrom(is);
+    restartDoit(is, chkfile);
+}
 
-    if (bReadSpecial)
-    {
-        BoxLib::readBoxArray(grids, is, bReadSpecial);
+void
+StateData::restart (std::istream&          is,
+		    const Box&             p_domain,
+		    const BoxArray&        grds,
+                    const StateDescriptor& d,
+                    const std::string&     chkfile)
+{
+    desc = &d;
+    domain = p_domain;
+    grids = grds;
+
+    // Convert to proper type.
+    IndexType typ(desc->getType());
+    if (!typ.cellCentered()) {
+        domain.convert(typ);
+        grids.convert(typ);
     }
-    else
+
     {
-        grids.readFrom(is);
+	Box domain_in;
+	BoxArray grids_in;
+	is >> domain_in;
+	grids_in.readFrom(is);
+	BL_ASSERT(domain_in == domain);
+	BL_ASSERT(BoxLib::match(grids_in,grids));
     }
+
+    restartDoit(is, chkfile);
+}
+
+void 
+StateData::restartDoit (std::istream& is, const std::string& chkfile)
+{
+    BL_PROFILE("StateData::restartDoit()");
 
     is >> old_time.start;
     is >> old_time.stop;
@@ -248,54 +276,59 @@ StateData::restart (std::istream&          is,
     int nsets;
     is >> nsets;
 
-    old_data = 0;
-    new_data = 0;
+    old_data = (nsets == 2) ? new MultiFab(grids,desc->nComp(),desc->nExtra(),Fab_allocate) : 0;
+    new_data =                new MultiFab(grids,desc->nComp(),desc->nExtra(),Fab_allocate);
     //
     // If no data is written then we just allocate the MF instead of reading it in. 
     // This assumes that the application will do something with it.
     // We set it to zero in case a compiler complains about uninitialized data.
     //
-    if (nsets == 0)
-    {
-       new_data = new MultiFab(grids,desc->nComp(),desc->nExtra(),Fab_allocate);
-       new_data->setVal(0.);
+    if (nsets == 0) {
+       new_data->setVal(0.0);
     }
 
     std::string mf_name;
     std::string FullPathName;
-    //
-    // This reads the "new" data, if it's there.
-    //
-    if (nsets >= 1)
-    {
-        new_data = new MultiFab;
-        is >> mf_name;
-        //
-        // Note that mf_name is relative to the Header file.
-        // We need to prepend the name of the chkfile directory.
-        //
-        FullPathName = chkfile;
-        if (!chkfile.empty() && chkfile[chkfile.length()-1] != '/')
-            FullPathName += '/';
-        FullPathName += mf_name;
-        VisMF::Read(*new_data, FullPathName);
-    }
-    //
-    // This reads the "old" data, if it's there.
-    //
-    if (nsets == 2)
-    {
-        old_data = new MultiFab;
-        is >> mf_name;
-        //
-        // Note that mf_name is relative to the Header file.
-        // We need to prepend the name of the chkfile directory.
-        //
-        FullPathName = chkfile;
-        if (!chkfile.empty() && chkfile[chkfile.length()-1] != '/')
-            FullPathName += '/';
-        FullPathName += mf_name;
-        VisMF::Read(*old_data, FullPathName);
+
+    for(int ns(1); ns <= nsets; ++ns) {
+      MultiFab *whichMF;
+      if(ns == 1) {
+	whichMF = new_data;
+      } else if(ns == 2) {
+	whichMF = old_data;
+      } else {
+        BoxLib::Abort("**** Error in StateData::restart:  invalid nsets.");
+      }
+
+      MultiFab data_in;
+      is >> mf_name;
+      //
+      // Note that mf_name is relative to the Header file.
+      // We need to prepend the name of the chkfile directory.
+      //
+      FullPathName = chkfile;
+      if ( ! chkfile.empty() && chkfile[chkfile.length()-1] != '/') {
+          FullPathName += '/';
+      }
+      FullPathName += mf_name;
+
+      // ---- check for preread header
+      std::string FullHeaderPathName(FullPathName + "_H");
+      const char *faHeader = 0;
+      if(faHeaderMap != 0) {
+        std::map<std::string, Array<char> >::iterator fahmIter;
+	fahmIter = faHeaderMap->find(FullHeaderPathName);
+	if(fahmIter != faHeaderMap->end()) {
+	  faHeader = fahmIter->second.dataPtr();
+	}
+      }
+      VisMF::Read(data_in, FullPathName, faHeader);
+      
+      BL_ASSERT(BoxLib::match(grids, data_in.boxArray()));
+      BL_ASSERT(whichMF->nComp() == data_in.nComp());
+      BL_ASSERT(whichMF->nGrow() == data_in.nGrow());
+      
+      MultiFab::Copy(*whichMF, data_in, 0, 0, whichMF->nComp(), whichMF->nGrow());
     }
 }
 
@@ -362,6 +395,23 @@ StateData::setNewTimeLevel (Real time)
     else
     {
         BoxLib::Error("StateData::setNewTimeLevel called with Interval");
+    }
+}
+
+void
+StateData::syncNewTimeLevel (Real time)
+{
+    Real teps = (new_time.stop - old_time.stop)*1.e-3;
+    if (time > new_time.stop-teps && time < new_time.stop+teps)
+    {
+	if (desc->timeType() == StateDescriptor::Point)
+	{
+	    new_time.start = new_time.stop = time;
+	}
+	else
+	{
+	    new_time.stop = time;
+	}
     }
 }
 
@@ -551,7 +601,7 @@ StateData::InterpAddBox (MultiFabCopyDescriptor& multiFabCopyDesc,
     }
     else
     {
-        const Real teps = (new_time.start - old_time.start)/1000.0;
+        const Real teps = (new_time.start - old_time.start)*1.e-3;
 
         if (time > new_time.start-teps && time < new_time.stop+teps)
         {
@@ -618,7 +668,7 @@ StateData::InterpFillFab (MultiFabCopyDescriptor&  multiFabCopyDesc,
     }
     else
     {
-        const Real teps = (new_time.start - old_time.start)/1000.0;
+        const Real teps = (new_time.start - old_time.start)*1.e-3;
 
         if (time > new_time.start-teps && time < new_time.stop+teps)
         {
@@ -714,8 +764,8 @@ StateData::checkPoint (const std::string& name,
         //
         // The relative name gets written to the Header file.
         //
-        std::string mf_name_old = name; mf_name_old += OldSuffix;
-        std::string mf_name_new = name; mf_name_new += NewSuffix;
+        std::string mf_name_old(name + OldSuffix);
+        std::string mf_name_new(name + NewSuffix);
 
         os << domain << '\n';
 
@@ -731,10 +781,13 @@ StateData::checkPoint (const std::string& name,
            if (dump_old)
            {
                os << 2 << '\n' << mf_name_new << '\n' << mf_name_old << '\n';
+	       fabArrayHeaderNames.push_back(mf_name_new);
+	       fabArrayHeaderNames.push_back(mf_name_old);
            }
            else
            {
                os << 1 << '\n' << mf_name_new << '\n';
+	       fabArrayHeaderNames.push_back(mf_name_new);
            }
         }
         else
@@ -746,13 +799,13 @@ StateData::checkPoint (const std::string& name,
     if (desc->store_in_checkpoint())
     {
        BL_ASSERT(new_data);
-       std::string mf_fullpath_new = fullpathname; mf_fullpath_new += NewSuffix;
+       std::string mf_fullpath_new(fullpathname + NewSuffix);
        VisMF::Write(*new_data,mf_fullpath_new,how);
 
        if (dump_old)
        {
            BL_ASSERT(old_data);
-           std::string mf_fullpath_old = fullpathname; mf_fullpath_old += OldSuffix;
+           std::string mf_fullpath_old(fullpathname + OldSuffix);
            VisMF::Write(*old_data,mf_fullpath_old,how);
        }
     }
@@ -780,9 +833,9 @@ StateDataPhysBCFunct::StateDataPhysBCFunct (StateData&sd, int sc, const Geometry
 { }
 
 void
-StateDataPhysBCFunct::doit (MultiFab& mf, int dest_comp, int num_comp, Real time)
+StateDataPhysBCFunct::FillBoundary (MultiFab& mf, int dest_comp, int num_comp, Real time)
 {
-    BL_PROFILE("StateDataPhysBCFunct::doit");
+    BL_PROFILE("StateDataPhysBCFunct::FillBoundary");
 
     const Box&     domain      = statedata->getDomain();
     const int*     domainlo    = domain.loVect();
@@ -810,7 +863,7 @@ StateDataPhysBCFunct::doit (MultiFab& mf, int dest_comp, int num_comp, Real time
 		if (geom.isPeriodic(i)) {
 		    is_periodic = is_periodic || touch;
 		} else {
-		has_phys_bc = has_phys_bc || touch;
+		    has_phys_bc = has_phys_bc || touch;
 		}
 	    }
 	    

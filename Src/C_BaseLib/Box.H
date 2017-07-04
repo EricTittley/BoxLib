@@ -172,7 +172,8 @@ class Box
 public:
     //
     // The default constructor.  For safety, the constructed Box is  
-    // invalid and may be tested for validity with ok().
+    // invalid and may be tested for validity with ok(). 
+    // DO NOT CHANGE THIS BEHAVIOR!
     //
     Box ();
     //
@@ -201,15 +202,17 @@ public:
     //
     // Get the smallend of the box.
     //
-    const IntVect& smallEnd () const { return smallend; }
+    const IntVect& smallEnd () const& { return smallend; }
+    const IntVect& smallEnd () && = delete;
     //
     // Return the coordinate of the low end in the given direction.
     //
-    int smallEnd (int dir) const { return smallend[dir]; }
+    int smallEnd (int dir) const& { return smallend[dir]; }
     //
     // Get the bigend.
     //
-    const IntVect& bigEnd () const { return bigend; }
+    const IntVect& bigEnd () const& { return bigend; }
+    const IntVect& bigEnd () && = delete;
     //
     // Return the coordinate of the high end in the given direction.
     //
@@ -243,12 +246,14 @@ public:
     // Returns a constant pointer the array of low end coordinates.
     // Useful for calls to FORTRAN.
     //
-    const int* loVect () const { return smallend.getVect(); }
+    const int* loVect () const& { return smallend.getVect(); }
+    const int* loVect () && = delete;
     //
     // Returns a constant pointer the array of high end coordinates.
     // Useful for calls to FORTRAN.
     //
-    const int* hiVect () const { return bigend.getVect(); }
+    const int* hiVect () const& { return bigend.getVect(); }
+    const int* hiVect () && = delete;
     //
     // Returns the coordinate normal to given face.
     //
@@ -327,10 +332,7 @@ public:
     //
     // Return the volume, in indexing space, of region enclosed by
     // this Box.   This is identical to numPts() for CELL centered
-    // Box; i.e. consider a edge-based box in 2D which has two edges
-    // in it.  This box has one cell center, located between the
-    // two edges.  numPts() would return 2 as would volume().
-    // Otherwise, numPts() >= volume().  Abort()s if the number
+    // Box; otherwise, numPts() > volume().  Abort()s if the number
     // cannot be represented in a long.
     //
     long volume () const;
@@ -354,7 +356,7 @@ public:
     int shortside () const;
     //
     // Returns offset of point from smallend; i.e.
-    // index(smallend) -> 0, bigend would return volume()-1.
+    // index(smallend) -> 0, bigend would return numPts()-1.
     // Is used in accessing FArrayBox.
     //
     long index (const IntVect& v) const;
@@ -382,6 +384,10 @@ public:
     Box& setRange (int dir,
                    int sm_index,
                    int n_cells = 1);
+    //
+    // Set indexing type
+    //
+    Box& setType (const IndexType& t) { btype = t; return *this; }
     //
     // Shift this Box nzones indexing positions in coordinate
     // direction dir.
@@ -487,8 +493,7 @@ public:
     // but is the only point in common.  It is also an error if the
     // chop_pnt is an end node of the Box.
     //
-    Box chop (int dir,
-                    int chop_pnt);
+    Box chop (int dir, int chop_pnt);
     //
     // Grow Box in all directions by given amount.
     // NOTE: n_cell negative shrinks the Box by that number of cells.
@@ -610,7 +615,8 @@ public:
 
     explicit BoxCommHelper (const Box& bx, int* p_ = 0);
 
-    int* data () const { return p; }
+    int* data () const& { return p; }
+    int* data () && = delete;
 
     Box make_box () const {
 	return Box(IntVect(p), IntVect(p+BL_SPACEDIM), IntVect(p+2*BL_SPACEDIM));

@@ -28,6 +28,10 @@ a.compfailed:link {color: yellow; text-decoration: none;}
 a.compfailed:visited {color: yellow; text-decoration: none;}
 a.compfailed:hover {color: #00ffff; text-decoration: underline;}
 
+a.crashed:link {color: yellow; text-decoration: none;}
+a.crashed:visited {color: yellow; text-decoration: none;}
+a.crashed:hover {color: #00ffff; text-decoration: underline;}
+
 h3.benchmade {text-decoration: none; display: inline;
               color: black; background-color: orange; padding: 2px;}
 
@@ -49,6 +53,7 @@ td {border-width: 0px;
 td.passed {background-color: lime; opacity: 0.8;}
 td.failed {background-color: red; color: yellow; opacity: 0.8;}
 td.compfailed {background-color: purple; color: yellow; opacity: 0.8;}
+td.crashed {background-color: black; color: yellow; opacity: 0.8;}
 td.benchmade {background-color: orange; opacity: 0.8;}
 td.date {background-color: #666666; color: white; opacity: 0.8; font-weight: bold;}
 
@@ -103,9 +108,11 @@ div.verticaltext {text-align: center;
 #summary tr.special {background: #ccccff;}
 #summary td.highlight {color: red;}
 
-#summary td.passed {background-color: lime;}
-#summary td.failed {background-color: red;}
+#summary td.passed {background-color: lime; }
+#summary td.failed {background-color: red; color: yellow;}
 #summary td.benchmade {background-color: orange;}
+#summary td.compfailed {background-color: purple; color: yellow;}
+#summary td.crashed {background-color: black; color: yellow;}
 
 div.small {font-size: 75%;}
 
@@ -330,6 +337,9 @@ def report_single_test(suite, test, tests, failure_msg=None):
             elif not compile_successful:
                 sf.write("COMPILE FAILED\n")
                 suite.log.testfail("{} COMPILE FAILED".format(test.name))
+            elif len(test.backtrace) > 0:
+                sf.write("CRASHED\n")
+                suite.log.testfail("{} CRASHED (backtraces produced)".format(test.name))
             else:
                 sf.write("FAILED\n")
                 suite.log.testfail("{} FAILED".format(test.name))
@@ -409,6 +419,9 @@ def report_single_test(suite, test, tests, failure_msg=None):
         if test.debug:
             ll.item("Debug test")
 
+        if test.acc:
+            ll.item("OpenACC test")            
+
         if test.useMPI or test.useOMP:
             ll.item("Parallel run")
             ll.indent()
@@ -431,7 +444,7 @@ def report_single_test(suite, test, tests, failure_msg=None):
 
         ll.item("input file: <a href=\"{}.{}\">{}</a>".format(test.name, test.inputFile, test.inputFile))
 
-        if suite.sourceTree == "C_Src":
+        if suite.sourceTree == "C_Src" and test.probinFile != "":
             ll.item("probin file: <a href=\"{}.{}\">{}</a>".format(test.name, test.probinFile, test.probinFile))
 
         for i, afile in enumerate(test.auxFiles):
@@ -505,9 +518,9 @@ def report_single_test(suite, test, tests, failure_msg=None):
         box_error = False
         grid_error = False
         variables_error = False
-
+        no_bench_error = False
+        
         for line in diff_lines:
-
             if "number of boxes do not match" in line:
                 box_error = True
                 break
@@ -519,6 +532,10 @@ def report_single_test(suite, test, tests, failure_msg=None):
             if "number of variables do not match" in line:
                 variables_error = True
 
+            if "no corresponding benchmark found" in line:
+                no_bench_error = True
+                break
+            
             if not in_diff_region:
                 if line.find("fcompare") > 1:
                     hf.write("<tt>"+line+"</tt>\n")
@@ -526,7 +543,10 @@ def report_single_test(suite, test, tests, failure_msg=None):
                     ht.start_table()
                     continue
 
-                if line.strip().startswith("diff"):
+                if line.strip().startswith("diff "):
+                    # this catches the start of a plain text diff --
+                    # we need the space here to not match variables
+                    # that start with diff
                     ht.end_table()
                     hf.write("<pre>\n")
 
@@ -588,6 +608,9 @@ def report_single_test(suite, test, tests, failure_msg=None):
 
         if grid_error:
             hf.write("<p>grids do not match</p>\n")
+
+        if no_bench_error:
+            hf.write("<p>no corresponding benchmark found</p>\n")
 
         if variables_error:
             hf.write("<p>variables differ in files</p>\n")
@@ -695,7 +718,7 @@ def report_this_test_run(suite, make_benchmarks, note, update_time,
             special_cols.append(suite.summary_job_info_field3)
 
         cols = ["test name", "dim", "compare plotfile",
-                "# levels", "MPI procs", "OMP threads", "debug",
+                "# levels", "MPI procs", "OMP threads", "OpenACC", "debug",
                 "compile", "restart"] + special_cols + ["wall time", "result"]
         ht = HTMLTable(hf, columns=len(cols), divs=["summary"])
         ht.start_table()
@@ -713,18 +736,29 @@ def report_this_test_run(suite, make_benchmarks, note, update_time,
 
             # check if it passed or failed
             status_file = "%s.status" % (test.name)
-
-            test_passed = 0
-
+            
+            status = None
             with open(status_file, 'r') as sf:
                 for line in sf:
                     if line.find("PASSED") >= 0:
-                        test_passed = 1
+                        status = "passed"
+                        td_class = "passed"
                         num_passed += 1
-                        break
+                    elif line.find("COMPILE FAILED") >= 0:
+                        status = "compile fail"
+                        td_class = "compfailed"
+                        num_failed += 1
+                    elif line.find("CRASHED") >= 0:
+                        status = "crashed"
+                        td_class = "crashed"
+                        num_failed += 1
+                    elif line.find("FAILED") >= 0:
+                        status = "failed"
+                        td_class = "failed"
+                        num_failed += 1
 
-                if not test_passed:
-                    num_failed += 1
+                    if status is not None:
+                        break
 
             row_info = []
             row_info.append("<a href=\"{}.html\">{}</a>".format(test.name, test.name))
@@ -747,12 +781,18 @@ def report_this_test_run(suite, make_benchmarks, note, update_time,
             else:
                 row_info.append("")
 
+            # OpenACC ?
+            if test.acc:
+                row_info.append("&check;")
+            else:
+                row_info.append("")
+
             # debug ?
             if test.debug:
                 row_info.append("&check;")
             else:
                 row_info.append("")
-
+                
             # compile ?
             if test.compileTest:
                 row_info.append("&check;")
@@ -768,22 +808,23 @@ def report_this_test_run(suite, make_benchmarks, note, update_time,
 
             # special columns
             if suite.summary_job_info_field1 is not "":
-                row_info.append("<div class='small'>{}</div>".format(test.job_info_field1))
+                row_info.append("<div class='small'>{}</div>".format(
+                    test.job_info_field1))
 
             if suite.summary_job_info_field2 is not "":
-                row_info.append("<div class='small'>{}</div>".format(test.job_info_field2))
+                row_info.append("<div class='small'>{}</div>".format(
+                    test.job_info_field2))
 
             if suite.summary_job_info_field3 is not "":
-                row_info.append("<div class='small'>{}</div>".format(test.job_info_field3))
+                row_info.append("<div class='small'>{}</div>".format(
+                    test.job_info_field3))
 
 
             # wallclock time
             row_info.append("{:.3f}&nbsp;s".format(test.wall_time))
 
-            if test_passed:
-                row_info.append(("PASSED", "class='passed'"))
-            else:
-                row_info.append(("FAILED", "class='failed'"))
+            # result
+            row_info.append((status.upper(), "class='{}'".format(td_class)))
 
             ht.print_row(row_info)
 
@@ -938,6 +979,9 @@ def report_all_runs(suite, active_test_list):
                         elif line.find("COMPILE FAILED") >= 0:
                             status = "compfailed"
                             emoji = ":("
+                        elif line.find("CRASHED") >= 0:
+                            status = "crashed"
+                            emoji = "xx"                            
                         elif line.find("FAILED") >= 0:
                             status = "failed"
                             emoji = "!&nbsp;"
@@ -953,7 +997,7 @@ def report_all_runs(suite, active_test_list):
                 hf.write("<td>&nbsp;</td>\n")
             elif status == "benchmade":
                 hf.write("<td align=center title=\"{}\" class=\"{}\"><h3>U</h3></td>\n".format(
-                    status, test))
+                    test, status))
             else:
                 hf.write("<td align=center title=\"{}\" class=\"{}\"><h3><a href=\"{}/{}.html\" class=\"{}\">{}</a></h3></td>\n".format(
                     test, status, tdir, test, status, emoji))

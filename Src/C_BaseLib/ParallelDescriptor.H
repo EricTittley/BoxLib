@@ -1,6 +1,7 @@
 #ifndef BL_PARALLELDESCRIPTOR_H
 #define BL_PARALLELDESCRIPTOR_H
 
+#include <BLBackTrace.H>
 #include <BLProfiler.H>
 #include <BLassert.H>
 #include <REAL.H>
@@ -32,6 +33,8 @@
 #include <typeinfo>
 #include <algorithm>
 #include <iostream>
+#include <limits>
+#include <numeric>
 
 namespace ParallelDescriptor
 {
@@ -57,7 +60,6 @@ namespace ParallelDescriptor
 #ifdef BL_USE_MPI3
     extern MPI_Win cp_win;
     extern MPI_Win fb_win;
-    extern MPI_Win fpb_win;
 #endif
 
     //
@@ -475,7 +477,6 @@ namespace ParallelDescriptor
 
 	return std::make_pair(rb,re);
     }
-#ifdef BL_USE_CXX11
     template <typename F>
     void team_for (int begin, int end, const F& f)
     {
@@ -500,7 +501,6 @@ namespace ParallelDescriptor
 	    f(i);
 	}
     }
-#endif
     //
     // BoxLib's Parallel Communicators
     //    m_comm_all       is for all ranks, probably MPI_COMM_WORLD
@@ -660,13 +660,9 @@ namespace ParallelDescriptor
 
     void Comm_dup (MPI_Comm comm, MPI_Comm& newcomm);
     //
-    // Issue architecture specific Abort.
-    //
-    void Abort ();
-    //
     // Abort with specified error code.
     //
-    void Abort (int errorcode);
+    void Abort (int errorcode = SIGABRT, bool backtrace = true);
     //
     // ErrorString return string associated with error internal error condition
     //
@@ -819,7 +815,11 @@ namespace ParallelDescriptor
                  Real* recvbuf,
                  int   root);
     //
-    // Returns sequential message sequence numbers in range 1000-9000.
+    // Returns sequential message sequence numbers, usually used as
+    // tags for send/recv.  getsetinc has these values:
+    // 0:  return the current sequence number and increment
+    // 1:  return the current sequence number
+    // 2:  set the current sequence number to newvalue
     //
     int SeqNum (int getsetinc = 0, int newvalue = 0);
     int SubSeqNum (int getsetinc = 0, int newvalue = 0);
@@ -848,6 +848,13 @@ namespace ParallelDescriptor
 
     template <class T, class T1> void Gather(const T*, size_t n, T1*, size_t n1, int root);
     template <class T> std::vector<T> Gather(const T&, int root);
+
+    template <class T> void Gatherv (const T* send, int sc,
+				     T* recv, const std::vector<int>& rc, const std::vector<int>& disp,
+				     int root);
+    template <class T> void Gatherv (const T* send, long sc,
+				     T* recv, const std::vector<long>& rc, const std::vector<long>& disp,
+				     int root);
 
     void Waitsome (Array<MPI_Request>&, int&, Array<int>&, Array<MPI_Status>&);
 
@@ -1160,6 +1167,8 @@ ParallelDescriptor::Bcast (T*     t,
     Lazy::EvalReduction();
 #endif
 
+    BL_ASSERT(n < std::numeric_limits<int>::max());
+
     BL_PROFILE_T_S("ParallelDescriptor::Bcast(Tsi)", T);
     BL_COMM_PROFILE(BLProfiler::BCastTsi, BLProfiler::BeforeCall(), root, BLProfiler::NoTag());
 
@@ -1185,6 +1194,8 @@ ParallelDescriptor::Bcast (T*     t,
 	Lazy::EvalReduction();
 #endif
 
+    BL_ASSERT(n < std::numeric_limits<int>::max());
+
     BL_PROFILE_T_S("ParallelDescriptor::Bcast(Tsi)", T);
     BL_COMM_PROFILE(BLProfiler::BCastTsi, BLProfiler::BeforeCall(), root, BLProfiler::NoTag());
 
@@ -1207,6 +1218,9 @@ ParallelDescriptor::Gather (const T* t,
     BL_PROFILE_T_S("ParallelDescriptor::Gather(TsT1si)", T);
     BL_COMM_PROFILE(BLProfiler::GatherTsT1Si, BLProfiler::BeforeCall(), root, BLProfiler::NoTag());
 
+    BL_ASSERT(n  < std::numeric_limits<int>::max());
+    BL_ASSERT(n1 < std::numeric_limits<int>::max());
+
     BL_MPI_REQUIRE( MPI_Gather(const_cast<T*>(t),
                                n,
                                Mpi_typemap<T>::type(),
@@ -1225,7 +1239,7 @@ ParallelDescriptor::Gather (const T& t, int root)
     BL_PROFILE_T_S("ParallelDescriptor::Gather(Ti)", T);
     BL_COMM_PROFILE(BLProfiler::GatherTi, BLProfiler::BeforeCall(), root, BLProfiler::NoTag());
 
-    std::vector<T> resl;
+    std::vector<T> resl(1);
     if ( root == MyProc() ) resl.resize(NProcs());
     BL_MPI_REQUIRE( MPI_Gather(const_cast<T*>(&t),
                                1,
@@ -1237,6 +1251,62 @@ ParallelDescriptor::Gather (const T& t, int root)
                                Communicator()) );
     BL_COMM_PROFILE(BLProfiler::GatherTi, sizeof(T), root, BLProfiler::NoTag());
     return resl;
+}
+
+template <class T>
+void
+ParallelDescriptor::Gatherv (const T* send, int sc, 
+			     T* recv, const std::vector<int>& rc, const std::vector<int>& disp,
+			     int root)
+{
+    BL_COMM_PROFILE(BLProfiler::Gatherv,  BLProfiler::BeforeCall(), root, BLProfiler::NoTag());
+
+    MPI_Gatherv(send, sc, ParallelDescriptor::Mpi_typemap<T>::type(),
+		recv, &rc[0], &disp[0], ParallelDescriptor::Mpi_typemap<T>::type(),
+		root, Communicator());
+
+    BL_COMM_PROFILE(BLProfiler::Gatherv, std::accumulate(rc.begin(),rc.end(),0)*sizeof(T), root, BLProfiler::NoTag());
+}
+
+template <class T>
+void
+ParallelDescriptor::Gatherv (const T* send, long sc, 
+			     T* recv, const std::vector<long>& rc, const std::vector<long>& disp,
+			     int root)
+{
+    BL_COMM_PROFILE(BLProfiler::Gatherv,  BLProfiler::BeforeCall(), root, BLProfiler::NoTag());
+
+    int tag = ParallelDescriptor::SeqNum();
+
+    if (MyProc() == root) {
+	int nprocs = NProcs();
+	BL_ASSERT(rc.size() == nprocs);
+	BL_ASSERT(disp.size() == nprocs);
+
+	std::vector<MPI_Request> request;
+	for (int i = 0; i < nprocs; ++i) {
+	    T* buf = recv + disp[i];
+	    if (i == root) {
+		for (int k = 0; k < rc[i]; ++k) {
+		    *buf++ = send[k];
+		}
+	    } else {
+		MPI_Request req;
+		MPI_Irecv(buf, rc[i], ParallelDescriptor::Mpi_typemap<T>::type(), i,
+			  tag, Communicator(), &req);
+		request.push_back(req);
+	    }
+	}
+	if (request.size() > 0) {
+	    std::vector<MPI_Status> status(request.size());
+	    MPI_Waitall(request.size(), &request[0], &status[0]);
+	}
+    } else {
+	MPI_Send(send, sc, ParallelDescriptor::Mpi_typemap<T>::type(), root, tag,
+		 Communicator());
+    }
+
+    BL_COMM_PROFILE(BLProfiler::Gatherv, std::accumulate(rc.begin(),rc.end(),0L)*sizeof(T), root, BLProfiler::NoTag());
 }
 
 template <class T, class T1>

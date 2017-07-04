@@ -81,7 +81,7 @@ def copy_benchmarks(old_full_test_dir, full_web_dir, test_list, bench_dir, log):
             else:
                 p = t.compareFile
 
-        if not p == "":
+        if p != "" and p is not None:
             if p.endswith(".tgz"):
                 try:
                     tg = tarfile.open(name=p, mode="r:gz")
@@ -239,16 +239,11 @@ def test_suite(argv):
             suite.repos[k].update = False
 
     else:
-        nouplist = no_update.split(",")
+        nouplist = [k.strip() for k in no_update.split(",")]
 
-        if "boxlib" in nouplist: suite.repos["BoxLib"].update = False
-        if suite.srcName.lower() in nouplist: suite.repos["source"].update = False
-        if suite.extSrcName.lower() in nouplist: suite.repos["extra_source"].update = False
-
-        # each extra build directory has its own update flag
-        for n, e in enumerate(suite.extra_build_names):
-            if e.lower() in nouplist:
-                suite.repos["extra_build-{}".format(n)].update = False
+        for repo in suite.repos.keys():
+            if repo.lower() in nouplist:
+                suite.repos[repo].update = False
 
     os.chdir(suite.testTopDir)
 
@@ -382,7 +377,8 @@ def test_suite(argv):
         suite.log.log("copying files to run directory...")
 
         needed_files = []
-        needed_files.append((executable, "move"))
+        if executable is not None:
+            needed_files.append((executable, "move"))
 
         needed_files.append((test.inputFile, "copy"))
         # strip out any sub-directory from the build dir
@@ -457,6 +453,8 @@ def test_suite(argv):
             else:
                 base_cmd += " amr.checkpoint_files_output=0"
 
+            base_cmd += "{} {}".format(suite.globalAddToExecString, test.runtime_params)
+
         elif suite.sourceTree == "F_Src" or test.testSrcTree == "F_Src":
 
             base_cmd = "./{} {} --plot_base_name {}_plt --check_base_name {}_chk ".format(
@@ -465,10 +463,13 @@ def test_suite(argv):
             # keep around the checkpoint files only for the restart runs
             if not test.restartTest: base_cmd += " --chk_int 0 "
 
-            base_cmd += "{}".format(suite.globalAddToExecString)
+            base_cmd += "{} {}".format(suite.globalAddToExecString, test.runtime_params)
 
         if args.with_valgrind:
             base_cmd = "valgrind " + args.valgrind_options + " " + base_cmd
+
+        if test.customRunCmd is not None:
+            base_cmd = test.customRunCmd
 
         suite.run_test(test, base_cmd)
 
@@ -767,9 +768,21 @@ def test_suite(argv):
 
                         shutil.copy(tool, os.getcwd())
 
-                        option = eval("suite.{}".format(test.analysisMainArgs))
-                        test_util.run("{} {} {}".format(os.path.basename(test.analysisRoutine),
-                                                        option, output_file))
+                        if test.analysisMainArgs == "":
+                            option = ""
+                        else:
+                            option = eval("suite.{}".format(test.analysisMainArgs))
+
+                        cmd_name = os.path.basename(test.analysisRoutine)
+                        cmd_string = "./{} {} {}".format(cmd_name, option, output_file)
+                        _, _, rc = test_util.run(cmd_string)
+
+                        if rc == 0:
+                            analysis_successful = True
+                        else:
+                            analysis_successful = False
+
+                        test.compare_successful = test.compare_successful and analysis_successful
 
             else:
                 if test.doVis or test.analysisRoutine != "":
@@ -793,7 +806,7 @@ def test_suite(argv):
                 shutil.copy(job_info_file, "{}/{}.job_info".format(
                     suite.full_web_dir, test.name))
 
-            if suite.sourceTree == "C_Src":
+            if suite.sourceTree == "C_Src" and test.probinFile != "":
                 shutil.copy(test.probinFile, "{}/{}.{}".format(
                     suite.full_web_dir, test.name, test.probinFile) )
 
@@ -851,7 +864,9 @@ def test_suite(argv):
                         suite.log.warn("unable to tar output file {}".format(pfile))
 
                     else:
-                        shutil.rmtree(pfile)
+                        try: shutil.rmtree(pfile)
+                        except OSError:
+                            suite.log.warn("unable to remove {}".format(pfile))
 
 
         #----------------------------------------------------------------------

@@ -11,9 +11,8 @@
 #include <DistributionMapping.H>
 #include <PhysBCFunct.H>
 #include <Geometry.H>
-
-class RealBox;
-class StateDescriptor;
+#include <RealBox.H>
+#include <StateDescriptor.H>
 
 //
 // Current and previous level-time data.
@@ -110,6 +109,8 @@ public:
     //
     void setNewTimeLevel (Real t_new);
 
+    void syncNewTimeLevel (Real t_new);
+
     void RegisterData (MultiFabCopyDescriptor& multiFabCopyDesc,
                        Array<MultiFabId>&      mfid);
 
@@ -157,8 +158,15 @@ public:
     //
     void restart (std::istream&          is,
                   const StateDescriptor& d,
-                  const std::string&     restart_file,
-		  bool                   bReadSpecial = false);
+                  const std::string&     restart_file);
+    //
+    // with domain box and grids provided
+    //
+    void restart (std::istream&          is,
+		  const Box&             p_domain,
+		  const BoxArray&        grds,
+                  const StateDescriptor& d,
+                  const std::string&     restart_file);
     //
     // or from another similar state
     //
@@ -179,11 +187,17 @@ public:
     //
     // Returns the current time.
     //
-    Real curTime () const { return 0.5*(new_time.start + new_time.stop); }
+    Real curTime () const {
+	return (desc->timeType() == StateDescriptor::Point) ?
+	    new_time.stop : 0.5*(new_time.start + new_time.stop);
+    }
     //
     // Returns the previous time.
     //
-    Real prevTime () const { return 0.5*(old_time.start + old_time.stop); }
+    Real prevTime () const {
+	return (desc->timeType() == StateDescriptor::Point) ?
+	    old_time.stop : 0.5*(old_time.start + old_time.stop);
+    }
     //
     // Returns the new data.
     //
@@ -235,6 +249,14 @@ public:
 
     void Check() const;
 
+    //
+    // These facilitate prereading FabArray headers to avoid
+    // synchronization when reading multiple FabArrays
+    //
+    static const Array<std::string> &FabArrayHeaderNames() { return fabArrayHeaderNames; }
+    static void ClearFabArrayHeaderNames() { fabArrayHeaderNames.clear(); }
+    static void SetFAHeaderMapPtr(std::map<std::string, Array<char> > *fahmp) { faHeaderMap = fahmp; }
+
 
 private:
 
@@ -271,14 +293,25 @@ private:
     // Pointer to previous time data.
     //
     MultiFab* old_data;
+    //
+    // This is used as a temporary collection of FabArray header
+    // names written during a checkpoint
+    //
+    static Array<std::string> fabArrayHeaderNames;
+    //
+    // This is used to store preread FabArray headers
+    //
+    static std::map<std::string, Array<char> > *faHeaderMap;  // ---- [faheader name, the header]
+
+    void restartDoit (std::istream& is, const std::string& restart_file);
 };
 
 class StateDataPhysBCFunct
-    : public PhysBCFunct
+    : public PhysBCFunctBase
 {
 public:
     StateDataPhysBCFunct (StateData& sd, int sc, const Geometry& geom_);
-    virtual void doit (MultiFab& mf, int dcomp, int ncomp, Real time);
+    virtual void FillBoundary (MultiFab& mf, int dcomp, int ncomp, Real time);
 private:
     StateData* statedata;
     int src_comp;

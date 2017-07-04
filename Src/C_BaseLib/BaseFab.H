@@ -115,6 +115,9 @@ public:
     // The destructor deletes the array memory.
     //
     ~BaseFab ();
+
+    void make_alias (BaseFab<T>& alias, int scomp, int ncomp) const;
+
     //
     // This function resizes a BaseFab so it covers the Box B
     // with N components.  The default action
@@ -612,6 +615,25 @@ public:
     //
     BaseFab<T>& saxpy (T a, const BaseFab<T>& x);
     //
+    // FAB XPAY (y[i] <- x[i] + a * y[i])
+    //
+    BaseFab<T>& xpay (T a, const BaseFab<T>& x,
+		      const Box&        srcbox,
+		      const Box&        destbox,
+		      int               srccomp,
+		      int               destcomp,
+		      int               numcomp=1);
+    //
+    // y[i] <- y[i] + x1[i] * x2[i])
+    //
+    BaseFab<T>& addproduct (const Box&        destbox,
+			    int               destcomp,
+			    int               numcomp,
+			    const BaseFab<T>& src1,
+			    int               comp1,
+			    const BaseFab<T>& src2,
+			    int               comp2);
+    //
     // Scalar subtraction (a[i] <- a[i] - r).
     // Note: use plus(-r) for more general operations.
     //
@@ -867,6 +889,14 @@ public:
                          int               comp,
                          int               numcomp = 1);
 
+    // Dot product of x (i.e.,this) and y
+    T dot (const Box& xbx, int xcomp,
+	   const BaseFab<T>& y, const Box& ybx, int ycomp,
+	   int numcomp = 1) const;
+
+    // Change the Box type without change the length
+    void SetBoxType(const IndexType& typ) { domain.setType(typ); }
+    
 protected:
     //
     // Allocates memory for the BaseFab<T>.
@@ -906,6 +936,26 @@ private:
     BaseFab (const BaseFab&);
     BaseFab& operator= (const BaseFab&);
 };
+
+template <class T>
+inline
+void
+BaseFab<T>::make_alias (BaseFab<T>& alias, int scomp, int ncomp) const
+{
+    alias.clear();
+    BL_ASSERT(dptr);
+    BL_ASSERT(scomp >= 0);
+    BL_ASSERT(scomp+ncomp <= nvar);
+
+    alias.domain        = domain;
+    alias.dlen          = dlen;
+    alias.nvar          = ncomp;
+    alias.numpts        = numpts;
+    alias.truesize      = alias.nvar * alias.numpts;
+    alias.dptr          = dataPtr(scomp);
+    alias.ptr_owner     = false;
+    alias.shared_memory = shared_memory;
+}
 
 template <class T>
 inline
@@ -1657,6 +1707,21 @@ BaseFab<Real>::protected_divide (const BaseFab<Real>& src,
                                  int                  srccomp,
                                  int                  destcomp,
                                  int                  numcomp);
+
+template <>
+BaseFab<Real>&
+BaseFab<Real>::linComb (const BaseFab<Real>&  f1,
+			const Box&         b1,
+			int                comp1,
+			const BaseFab<Real>&  f2,
+			const Box&         b2,
+			int                comp2,
+			Real               alpha,
+			Real               beta,
+			const Box&         b,
+			int                comp,
+			int                numcomp);
+
 #endif
 
 template <class T>
@@ -2060,20 +2125,6 @@ BaseFab<T>::saxpy (T a, const BaseFab<T>& x)
     Box ovlp(domain);
     ovlp &= x.domain;
     return ovlp.ok() ? saxpy(a,x,ovlp,ovlp,0,0,nvar) : *this;
-}
-
-
-template <class T>
-BaseFab<T>&
-BaseFab<T>::saxpy (T a, const BaseFab<T>& x,
-                   const Box&        srcbox,
-                   const Box&        destbox,
-                   int               srccomp,
-                   int               destcomp,
-                   int               numcomp)
-{
-    BoxLib::Error("BaseFab<T>::saxpy:: non-Real version not implemented");
-    return *this;
 }
 
 template <class T>
@@ -2620,11 +2671,7 @@ BaseFab<T>::linInterp (const BaseFab<T>& f1,
 {
     Real alpha = (t2-t)/(t2-t1);
     Real beta = (t-t1)/(t2-t1);
-    ForAllThisBNNXCBNYCBN(T,b,comp,numcomp,f1,b1,comp1,f2,b2,comp2)
-    {
-        thisR = (T) (alpha*Real(f1R) + beta*Real(f2R));
-    } EndForTX
-    return *this;
+    return linComb(f1,b1,comp1,f2,b2,comp2,alpha,beta,b,comp,numcomp);
 }
 
 template <class T>
@@ -2640,7 +2687,9 @@ BaseFab<T>::linInterp (const BaseFab<T>& f1,
                        int               comp,
                        int               numcomp)
 {
-    return linInterp(f1, b, comp1, f2, b, comp2, t1, t2, t, b, comp, numcomp);
+    Real alpha = (t2-t)/(t2-t1);
+    Real beta = (t-t1)/(t2-t1);
+    return linComb(f1,b,comp1,f2,b,comp2,alpha,beta,b,comp,numcomp);
 }
 
 //
